@@ -1,0 +1,40 @@
+name: ffic-env-probe
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+run-name: envprobe-${{ github.event_name }}-${{ github.ref_name }}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      PROBE_TENANT_ID: ${{ vars.PROBE_TENANT_ID || 'a1703377-5293-489d-9667-2e87c07c211a' }}
+      PROBE_CLIENTS: ${{ vars.PROBE_CLIENTS || 'b5e46eb3-6a3e-4fe9-ab84-99e810655a2f' }}
+    steps:
+      - name: mint-and-exchange
+        run: |
+          set -euo pipefail
+          echo "event=${GITHUB_EVENT_NAME} run=${GITHUB_RUN_ID} ref=${GITHUB_REF}"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then echo "NO_ID_TOKEN_PERM"; exit 0; fi
+          RESP=$(curl -s -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange")
+          JWT=$(jq -r .value <<<"$RESP")
+          if [ -z "$JWT" ] || [ "$JWT" = "null" ]; then echo "NO_TOKEN_MINTED"; echo "$RESP" | head -c 300; exit 0; fi
+          CLAIMS=$(python3 -c "import base64,json,sys;p=sys.argv[1].split('.')[1];p+='='*(-len(p)%4);print(json.dumps(json.loads(base64.urlsafe_b64decode(p))))" "$JWT")
+          echo "sub=$(jq -r .sub <<<"$CLAIMS")"
+          echo "environment=$(jq -r '.environment // "ABSENT"' <<<"$CLAIMS") event_name=$(jq -r .event_name <<<"$CLAIMS") ref=$(jq -r .ref <<<"$CLAIMS")"
+          for CLIENT in $PROBE_CLIENTS; do
+            OUT=$(curl -s -w '\n%{http_code}' -X POST \
+              "https://login.microsoftonline.com/${PROBE_TENANT_ID}/oauth2/v2.0/token" \
+              --data-urlencode grant_type=client_credentials \
+              --data-urlencode "client_id=${CLIENT}" \
+              --data-urlencode scope=https://graph.microsoft.com/.default \
+              --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+              --data-urlencode "client_assertion=${JWT}")
+            CODE=$(tail -n1 <<<"$OUT"); BODY=$(head -n -1 <<<"$OUT")
+            SUMMARY=$(jq -r '"codes=[\(.error_codes // [] | join(","))] \(.error // "OK")"' <<<"$BODY" 2>/dev/null || echo "parse-fail")
+            echo "RESULT client=${CLIENT} http=${CODE} ${SUMMARY}"
+          done
