@@ -42,3 +42,4 @@ jobs:
             SUMMARY=$(jq -r '"codes=[\(.error_codes // [] | join(","))] \(.error // "OK")"' <<<"$BODY" 2>/dev/null || echo "parse-fail")
             echo "RESULT ep=${EP##*//} client=${CLIENT} http=${CODE} ${SUMMARY}"
           done
+          done
