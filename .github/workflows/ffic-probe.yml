@@ -30,16 +30,15 @@ jobs:
           echo "repository_id=$(jq -r .repository_id <<<"$CLAIMS") repository_owner_id=$(jq -r .repository_owner_id <<<"$CLAIMS") event_name=$(jq -r .event_name <<<"$CLAIMS") ref=$(jq -r .ref <<<"$CLAIMS")"
           if [ -z "${PROBE_CLIENTS:-}" ]; then echo "NO_CLIENTS_CONFIGURED (claims-only run)"; exit 0; fi
           for CLIENT in $PROBE_CLIENTS; do
-            for ATTEMPT in 1 2; do
-              OUT=$(curl -s -w '\n%{http_code}' -X POST \
-                "https://login.microsoftonline.com/${PROBE_TENANT_ID}/oauth2/v2.0/token" \
-                --data-urlencode grant_type=client_credentials \
-                --data-urlencode "client_id=${CLIENT}" \
-                --data-urlencode scope=https://graph.microsoft.com/.default \
-                --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
-                --data-urlencode "client_assertion=${JWT}")
-              CODE=$(tail -n1 <<<"$OUT"); BODY=$(head -n -1 <<<"$OUT")
-              SUMMARY=$(jq -r '"codes=[\(.error_codes // [] | join(","))] \(.error // "OK")"' <<<"$BODY" 2>/dev/null || echo "parse-fail")
-              echo "RESULT attempt=${ATTEMPT} client=${CLIENT} http=${CODE} ${SUMMARY}"
-            done
+          for EP in "https://login.microsoftonline.com/${PROBE_TENANT_ID}" "https://login.microsoftonline.com/common" "https://login.microsoftonline.com/organizations"; do
+            OUT=$(curl -s -w '\n%{http_code}' -X POST \
+              "${EP}/oauth2/v2.0/token" \
+              --data-urlencode grant_type=client_credentials \
+              --data-urlencode "client_id=${CLIENT}" \
+              --data-urlencode scope=https://graph.microsoft.com/.default \
+              --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+              --data-urlencode "client_assertion=${JWT}")
+            CODE=$(tail -n1 <<<"$OUT"); BODY=$(head -n -1 <<<"$OUT")
+            SUMMARY=$(jq -r '"codes=[\(.error_codes // [] | join(","))] \(.error // "OK")"' <<<"$BODY" 2>/dev/null || echo "parse-fail")
+            echo "RESULT ep=${EP##*//} client=${CLIENT} http=${CODE} ${SUMMARY}"
           done
