@@ -1,0 +1,48 @@
+name: bp2-probe
+on: [workflow_dispatch]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      BP: 793a875e-6370-4bbb-a870-70fd9de1d0be
+      TENANT: a1703377-5293-489d-9667-2e87c07c211a
+      ME: 450ffe04-93ee-4404-96fc-18e6a16189a7
+    steps:
+      - name: full-agent-chain
+        run: |
+          set -euo pipefail
+          dec() { python3 -c "import base64,json,sys;p=sys.argv[1].split('.')[1];p+='='*(-len(p)%4);d=json.loads(base64.urlsafe_b64decode(p));print(json.dumps({k:d.get(k) for k in ['tid','idtyp','aud','appid','roles','sub','scp']}))" "$1"; }
+          JWT=$(curl -s -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" | jq -r .value)
+          echo "stage0 github sub ok"
+          TBP=$(curl -s -X POST "https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token" \
+            --data-urlencode grant_type=client_credentials --data-urlencode "client_id=${BP}" \
+            --data-urlencode scope=https://graph.microsoft.com/.default \
+            --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+            --data-urlencode "client_assertion=${JWT}" | jq -r .access_token)
+          echo "stage1 blueprint-token: $(dec "$TBP")"
+          CHILD=$(curl -s -X POST "https://graph.microsoft.com/beta/servicePrincipals/microsoft.graph.agentIdentity" \
+            -H "Authorization: Bearer ${TBP}" -H "Content-Type: application/json" \
+            -d "{\"displayName\":\"ffic-child\",\"agentIdentityBlueprintId\":\"${BP}\",\"sponsors@odata.bind\":[\"https://graph.microsoft.com/v1.0/users/${ME}\"]}")
+          CID=$(jq -r '.id // empty' <<<"$CHILD")
+          echo "stage2 child-create: id=${CID} err=$(jq -r '.error.message // "none"' <<<"$CHILD" | head -c 120)"
+          if [ -n "$CID" ]; then
+            T1=$(curl -s -X POST "https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token" \
+              --data-urlencode grant_type=client_credentials --data-urlencode "client_id=${BP}" \
+              --data-urlencode "scope=api://AzureADTokenExchange/.default" \
+              --data-urlencode "fmi_path=${CID}" \
+              --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+              --data-urlencode "client_assertion=${JWT}" | jq -r '.access_token // .error')
+            echo "stage3 fmi-exchange: $(if [[ "$T1" == ey* ]]; then dec "$T1"; else echo "$T1"; fi)"
+            if [[ "$T1" == ey* ]]; then
+              T2=$(curl -s -X POST "https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token" \
+                --data-urlencode grant_type=client_credentials --data-urlencode "client_id=${CID}" \
+                --data-urlencode scope=https://graph.microsoft.com/.default \
+                --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+                --data-urlencode "client_assertion=${T1}" | jq -r '.access_token // .error')
+              echo "stage4 child-token: $(if [[ "$T2" == ey* ]]; then dec "$T2"; else echo "$T2"; fi)"
+            fi
+          fi
