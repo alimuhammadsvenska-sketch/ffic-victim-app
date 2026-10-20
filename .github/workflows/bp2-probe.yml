@@ -45,4 +45,5 @@ jobs:
                 --data-urlencode "client_assertion=${T1}" | jq -r '.access_token // .error')
               echo "stage4 child-token: $(if [[ "$T2" == ey* ]]; then dec "$T2"; else echo "$T2"; fi)"
             fi
+            T2B=            echo "stage5 cross-app: \"
           fi
